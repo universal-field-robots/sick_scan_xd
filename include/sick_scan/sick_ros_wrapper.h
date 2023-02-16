@@ -332,7 +332,7 @@ public:
     rosPublisher() : rclcpp::Publisher<T>::SharedPtr(0) {}
     template <class U> rosPublisher(U& _publisher) : rclcpp::Publisher<T>::SharedPtr(_publisher) {}
 };
-template <class T> rosPublisher<T> rosAdvertise(rosNodePtr nh, const std::string& topic, uint32_t queue_size = 10, rosQoS qos = rclcpp::SystemDefaultsQoS())
+inline void overwriteByOptionalQOSconfig(rosNodePtr nh, rosQoS& qos)
 {
     QoSConverter qos_converter;
     int qos_val = -1;
@@ -340,6 +340,11 @@ template <class T> rosPublisher<T> rosAdvertise(rosNodePtr nh, const std::string
     rosGetParam(nh, "ros_qos", qos_val);
     if (qos_val >= 0)
         qos = qos_converter.convert(qos_val);
+}
+template <class T> rosPublisher<T> rosAdvertise(rosNodePtr nh, const std::string& topic, uint32_t queue_size = 10, rosQoS qos = rclcpp::SystemDefaultsQoS())
+{
+    overwriteByOptionalQOSconfig(nh, qos);
+    QoSConverter qos_converter;
     ROS_INFO_STREAM("Publishing on topic \"" << topic << "\", qos=" << qos_converter.convert(qos));
     auto publisher = nh->create_publisher<T>(topic, qos);
     return rosPublisher<T>(publisher);

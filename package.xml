@@ -33,6 +33,7 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>visualization_msgs</depend>
+  <depend>libsick_ldmrs</depend>
 
   <depend condition="$ROS_VERSION == 2">rcl_interfaces</depend>
 
@@ -51,4 +52,3 @@
   
   <member_of_group condition="$ROS_VERSION == 2">rosidl_interface_packages</member_of_group>
 </package>
-

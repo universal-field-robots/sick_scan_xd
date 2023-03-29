@@ -17,8 +17,6 @@ endif()
 # LDMRS build options
 if(WIN32)
     option(BUILD_WITH_LDMRS_SUPPORT "Build ${PROJECT_NAME} with LDMRS support (ON, libsick_ldmrs from https://github.com/SICKAG/libsick_ldmrs required) or without LDMRS support (OFF)" OFF)
-elseif(LDMRS EQUAL 0)
-    option(BUILD_WITH_LDMRS_SUPPORT "Build ${PROJECT_NAME} with LDMRS support (ON, libsick_ldmrs from https://github.com/SICKAG/libsick_ldmrs required) or without LDMRS support (OFF)" OFF)
 else()
     option(BUILD_WITH_LDMRS_SUPPORT "Build ${PROJECT_NAME} with LDMRS support (ON, libsick_ldmrs from https://github.com/SICKAG/libsick_ldmrs required) or without LDMRS support (OFF)" ON)
 endif()

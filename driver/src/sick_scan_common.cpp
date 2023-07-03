@@ -3361,6 +3361,37 @@ namespace sick_scan
           RETURN_ERROR_ON_RESPONSE_TIMEOUT(result, outputFilterEchoRangeReply); // No response, non-recoverable connection error (return error and do not try other commands)
         }
 
+      // configure particle filter
+
+        char requestEchoSetting[MAX_STR_LEN];
+        // bool particleFilterSetting = true;
+        // rosDeclareParam(nh, "particle_filter", particleFilterSetting);
+        // rosGetParam(nh, "filter_echos", particleFilterSetting);
+
+        // Uses sprintf-Mask to set bitencoded echos and rssi enable flag
+        const char *pcCmdMask = sopasCmdMaskVec[CMD_SET_PARTICLE_FILTER].c_str();
+        /*
+        First echo : 0
+        All echos : 1
+        Last echo : 2
+        */
+        sprintf(requestEchoSetting, pcCmdMask, 1, 1);
+        std::vector<unsigned char> outputFilterEchoRangeReply;
+
+
+        if (useBinaryCmd)
+        {
+          std::vector<unsigned char> reqBinary;
+          this->convertAscii2BinaryCmd(requestEchoSetting, &reqBinary);
+          result = sendSopasAndCheckAnswer(reqBinary, &sopasReplyBinVec[CMD_SET_PARTICLE_FILTER]);
+          RETURN_ERROR_ON_RESPONSE_TIMEOUT(result, sopasReplyBinVec[CMD_SET_PARTICLE_FILTER]); // No response, non-recoverable connection error (return error and do not try other commands)
+        }
+        else
+        {
+          result = sendSopasAndCheckAnswer(requestEchoSetting, &outputFilterEchoRangeReply);
+          RETURN_ERROR_ON_RESPONSE_TIMEOUT(result, outputFilterEchoRangeReply); // No response, non-recoverable connection error (return error and do not try other commands)
+        }
+
       }
 
 

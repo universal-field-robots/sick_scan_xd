@@ -3363,33 +3363,33 @@ namespace sick_scan
 
       // configure particle filter
 
-        char requestEchoSetting[MAX_STR_LEN];
+        char requestParticleFilterSetting[MAX_STR_LEN];
         // bool particleFilterSetting = true;
         // rosDeclareParam(nh, "particle_filter", particleFilterSetting);
         // rosGetParam(nh, "filter_echos", particleFilterSetting);
 
         // Uses sprintf-Mask to set bitencoded echos and rssi enable flag
-        const char *pcCmdMask = sopasCmdMaskVec[CMD_SET_PARTICLE_FILTER].c_str();
+        const char *pcCmdMask2 = sopasCmdMaskVec[CMD_SET_PARTICLE_FILTER].c_str();
         /*
         First echo : 0
         All echos : 1
         Last echo : 2
         */
-        sprintf(requestEchoSetting, pcCmdMask, 1, 1);
-        std::vector<unsigned char> outputFilterEchoRangeReply;
+        sprintf(requestParticleFilterSetting, pcCmdMask2, 1, 1);
+        std::vector<unsigned char> outputFilterEchoRangeReply2;
 
 
         if (useBinaryCmd)
         {
-          std::vector<unsigned char> reqBinary;
-          this->convertAscii2BinaryCmd(requestEchoSetting, &reqBinary);
-          result = sendSopasAndCheckAnswer(reqBinary, &sopasReplyBinVec[CMD_SET_PARTICLE_FILTER]);
+          std::vector<unsigned char> reqBinary2;
+          this->convertAscii2BinaryCmd(requestParticleFilterSetting, &reqBinary2);
+          result = sendSopasAndCheckAnswer(reqBinary2, &sopasReplyBinVec[CMD_SET_PARTICLE_FILTER]);
           RETURN_ERROR_ON_RESPONSE_TIMEOUT(result, sopasReplyBinVec[CMD_SET_PARTICLE_FILTER]); // No response, non-recoverable connection error (return error and do not try other commands)
         }
         else
         {
-          result = sendSopasAndCheckAnswer(requestEchoSetting, &outputFilterEchoRangeReply);
-          RETURN_ERROR_ON_RESPONSE_TIMEOUT(result, outputFilterEchoRangeReply); // No response, non-recoverable connection error (return error and do not try other commands)
+          result = sendSopasAndCheckAnswer(requestParticleFilterSetting, &outputFilterEchoRangeReply2);
+          RETURN_ERROR_ON_RESPONSE_TIMEOUT(result, outputFilterEchoRangeReply2); // No response, non-recoverable connection error (return error and do not try other commands)
         }
 
       }

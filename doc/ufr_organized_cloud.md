@@ -1,8 +1,13 @@
 # UFR patch: organized cloud + range/signal/reflector images (multiScan)
 
-UFR-specific addition on top of upstream `sick_scan_xd`, built for the multiScan136 driver
-(`sick_scansegment_xd` / `RosMsgpackPublisher`). Not applicable to picoScan or the classic
-single-layer scanners handled by the rest of this repo.
+UFR-specific addition on top of upstream `sick_scan_xd`, built for the `sick_scansegment_xd` /
+`RosMsgpackPublisher` driver that handles SICK's multiScan family (this driver, and this codebase's
+comments/class names/`scanner_type` param throughout, refer to it generically as "multiScan136"
+regardless of the exact model — the unit this was actually built and tested against is a
+**multiScan165**, not a 136; its per-model layer/FOV spec sheet wasn't checked against SICK's docs,
+so treat any layer-count numbers below as "what this specific unit reported," not a multiScan165
+spec claim). Not applicable to picoScan or the classic single-layer scanners handled by the rest of
+this repo.
 
 ## Why
 
@@ -86,12 +91,13 @@ New `Config`/launch parameters (same wiring pattern as `imu_enable`/`imu_topic` 
   appeared to be looking at a different close object entirely during that test. **Open item**: a
   clean test needs one large flat target square to the sensor (removes the 3D-parallax confound)
   observed with nothing else in range, to determine whether real per-beam misalignment exists.
-- **Layer count observed vs. spec'd.** multiScan136 is documented as 16 layers, 2 of them
-  higher-resolution (~8x denser). Only 14 layers were present in `scandata` on the unit and
-  configuration tested here; the 2 hi-res layers never showed up (possibly filtered out via
-  `host_LFPlayerFilter`'s stored on-device state, not confirmed). `organized_cloud`'s height
-  reflects however many layers the sensor actually reports each frame — it isn't hardcoded to 16 —
-  so this isn't a bug in this patch, just worth knowing if you're expecting a specific row count.
+- **Layer count observed.** This codebase's reference model, multiScan136, is documented as 16
+  layers, 2 of them higher-resolution (~8x denser) — whether a multiScan165 shares that exact
+  layout wasn't checked. Only 14 layers were present in `scandata` on the unit and configuration
+  tested here; unconfirmed whether that's this model's real layer count or 2 layers were filtered
+  out via `host_LFPlayerFilter`'s stored on-device state. `organized_cloud`'s height reflects
+  however many layers the sensor actually reports each frame — it isn't hardcoded to 16 — so this
+  isn't a bug in this patch, just worth knowing if you're expecting a specific row count.
 - **Pre-existing, unrelated:** `sick_multiscan.launch`'s `imu_enable` `<param>` is hardcoded to
   `value="True"` rather than reading `$(arg imu_enable)` — no `<arg name="imu_enable">` exists at
   all. The CLI/launch override for it has always been a no-op, on both `master` and this branch.
@@ -107,7 +113,7 @@ New `Config`/launch parameters (same wiring pattern as `imu_enable`/`imu_topic` 
 
 ## Testing performed
 
-Built and run against a real multiScan136 unit (bench test, `hostname=192.168.0.1`) for several
-sessions across the changes above; not run against picoScan or in CI. `organized_cloud`,
+Built and run against a real multiScan165 unit (bench test, `hostname=192.168.0.1`) for several
+sessions across the changes above; not run against picoScan, other multiScan models, or in CI. `organized_cloud`,
 `range_image`, `signal_image`, `reflector_image`, and `imu` all verified live over UDP, including
 frame-to-frame stability spot checks and the per-ring diagnostics described above.

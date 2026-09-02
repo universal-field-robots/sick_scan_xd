@@ -159,6 +159,14 @@ namespace sick_scansegment_xd
         int imu_udp_port;                           // default udp port for multiScan imu data is 7503
         int imu_latency_microsec;                   // imu latency in microseconds
 
+        // Organized (Ouster-style) pointcloud + range/signal images, derived from a single echo's
+        // points reshaped into a layer x azimuth grid. See RosMsgpackPublisher::convertPointsToOrganizedCloud.
+        bool organized_cloud_enable;                // publish organized pointcloud + range/signal images, default: false
+        std::string organized_cloud_topic;          // ROS topic for the organized pointcloud
+        std::string range_image_topic;               // ROS topic for the range (depth) image
+        std::string signal_image_topic;              // ROS topic for the signal (intensity) image
+        std::string reflector_image_topic;           // ROS topic for the reflector-bit image (not a calibrated reflectivity value)
+
         // SOPAS settings
         std::string sopas_tcp_port;                 // TCP port for SOPAS commands, default port: 2111
         bool start_sopas_service;                   // True: sopas services for CoLa-commands are started (ROS only), default: true

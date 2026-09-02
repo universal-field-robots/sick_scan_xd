@@ -169,6 +169,11 @@ sick_scansegment_xd::Config::Config()
     imu_topic = "imu";                       // ROS topic for IMU messages
     imu_udp_port = 7503;                     // default udp port for multiScan imu data is 7503
     imu_latency_microsec = 0;                // imu latency in microseconds
+    organized_cloud_enable = false;          // publish organized pointcloud + range/signal images, default: false
+    organized_cloud_topic = "organized_cloud"; // ROS topic for the organized pointcloud
+    range_image_topic = "range_image";       // ROS topic for the range (depth) image
+    signal_image_topic = "signal_image";     // ROS topic for the signal (intensity) image
+    reflector_image_topic = "reflector_image"; // ROS topic for the reflector-bit image
 
     // SOPAS default settings
     sopas_tcp_port = "2111";                 // TCP port for SOPAS commands, default port: 2111
@@ -246,6 +251,11 @@ void sick_scansegment_xd::Config::PrintHelp(void)
     ROS_INFO_STREAM("-imu_topic=<name> : ROS topic of IMU messages, default: " << imu_topic);
     ROS_INFO_STREAM("-imu_udp_port=<port>: udp port for multiScan imu data, default: " << imu_udp_port);
     ROS_INFO_STREAM("-imu_latency_microsec=<micro_sec>: imu latency in microseconds, default: " << imu_latency_microsec);
+    ROS_INFO_STREAM("-organized_cloud_enable=0|1 : publish an organized (Ouster-style) pointcloud plus range/signal images, default: " << organized_cloud_enable);
+    ROS_INFO_STREAM("-organized_cloud_topic=<name> : ROS topic of the organized pointcloud, default: " << organized_cloud_topic);
+    ROS_INFO_STREAM("-range_image_topic=<name> : ROS topic of the range image, default: " << range_image_topic);
+    ROS_INFO_STREAM("-signal_image_topic=<name> : ROS topic of the signal image, default: " << signal_image_topic);
+    ROS_INFO_STREAM("-reflector_image_topic=<name> : ROS topic of the reflector-bit image, default: " << reflector_image_topic);
 }
 
 /*
@@ -287,6 +297,11 @@ bool sick_scansegment_xd::Config::Init(rosNodePtr _node)
     ROS_DECL_GET_PARAMETER(node, "imu_topic", imu_topic);
     ROS_DECL_GET_PARAMETER(node, "imu_udp_port", imu_udp_port);
     ROS_DECL_GET_PARAMETER(node, "imu_latency_microsec", imu_latency_microsec);
+    ROS_DECL_GET_PARAMETER(node, "organized_cloud_enable", organized_cloud_enable);
+    ROS_DECL_GET_PARAMETER(node, "organized_cloud_topic", organized_cloud_topic);
+    ROS_DECL_GET_PARAMETER(node, "range_image_topic", range_image_topic);
+    ROS_DECL_GET_PARAMETER(node, "signal_image_topic", signal_image_topic);
+    ROS_DECL_GET_PARAMETER(node, "reflector_image_topic", reflector_image_topic);
     ROS_DECL_GET_PARAMETER(node, "sopas_tcp_port", sopas_tcp_port);
     ROS_DECL_GET_PARAMETER(node, "start_sopas_service", start_sopas_service);
     ROS_DECL_GET_PARAMETER(node, "send_sopas_start_stop_cmd", send_sopas_start_stop_cmd);
@@ -434,6 +449,11 @@ bool sick_scansegment_xd::Config::Init(int argc, char** argv)
     setOptionalArgument(cli_parameter_map, "imu_topic", imu_topic);
     setOptionalArgument(cli_parameter_map, "imu_udp_port", imu_udp_port);
     setOptionalArgument(cli_parameter_map, "imu_latency_microsec", imu_latency_microsec);
+    setOptionalArgument(cli_parameter_map, "organized_cloud_enable", organized_cloud_enable);
+    setOptionalArgument(cli_parameter_map, "organized_cloud_topic", organized_cloud_topic);
+    setOptionalArgument(cli_parameter_map, "range_image_topic", range_image_topic);
+    setOptionalArgument(cli_parameter_map, "signal_image_topic", signal_image_topic);
+    setOptionalArgument(cli_parameter_map, "reflector_image_topic", reflector_image_topic);
     setOptionalArgument(cli_parameter_map, "sopas_tcp_port", sopas_tcp_port);
     setOptionalArgument(cli_parameter_map, "start_sopas_service", start_sopas_service);
     setOptionalArgument(cli_parameter_map, "send_sopas_start_stop_cmd", send_sopas_start_stop_cmd);
@@ -521,6 +541,11 @@ void sick_scansegment_xd::Config::PrintConfig(void)
     ROS_INFO_STREAM("imu_topic:                        " << imu_topic);
     ROS_INFO_STREAM("imu_udp_port:                     " << imu_udp_port);
     ROS_INFO_STREAM("imu_latency_microsec:             " << imu_latency_microsec);
+    ROS_INFO_STREAM("organized_cloud_enable:           " << organized_cloud_enable);
+    ROS_INFO_STREAM("organized_cloud_topic:            " << organized_cloud_topic);
+    ROS_INFO_STREAM("range_image_topic:                " << range_image_topic);
+    ROS_INFO_STREAM("signal_image_topic:               " << signal_image_topic);
+    ROS_INFO_STREAM("reflector_image_topic:            " << reflector_image_topic);
     ROS_INFO_STREAM("sopas_tcp_port:                   " << sopas_tcp_port);
     ROS_INFO_STREAM("start_sopas_service:              " << start_sopas_service);
     ROS_INFO_STREAM("send_sopas_start_stop_cmd:        " << send_sopas_start_stop_cmd);

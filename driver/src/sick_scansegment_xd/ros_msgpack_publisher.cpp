@@ -51,7 +51,11 @@
  *
  *
  */
+#include <algorithm>
 #include <climits>
+#include <cmath>
+#include <cstring>
+#include <limits>
 
 #include <sick_scan/sick_generic_callback.h>
 #include "sick_scansegment_xd/compact_parser.h"
@@ -305,6 +309,29 @@ sick_scansegment_xd::RosMsgpackPublisher::RosMsgpackPublisher(const std::string&
 		m_publisher_imu_initialized = true;
 		ROS_INFO_STREAM("RosMsgpackPublisher: publishing Imu messages on topic \"" << m_publisher_imu->get_topic_name() << "\"");
 	}
+	if (config.organized_cloud_enable)
+	{
+		std::string organized_cloud_topic = config.organized_cloud_topic;
+		std::string range_image_topic = config.range_image_topic;
+		std::string signal_image_topic = config.signal_image_topic;
+		std::string reflector_image_topic = config.reflector_image_topic;
+		if (organized_cloud_topic[0] != '/')
+			organized_cloud_topic = "~/" + organized_cloud_topic;
+		if (range_image_topic[0] != '/')
+			range_image_topic = "~/" + range_image_topic;
+		if (signal_image_topic[0] != '/')
+			signal_image_topic = "~/" + signal_image_topic;
+		if (reflector_image_topic[0] != '/')
+			reflector_image_topic = "~/" + reflector_image_topic;
+		m_publisher_organized_cloud = create_publisher<ros_sensor_msgs::PointCloud2>(organized_cloud_topic, qos);
+		m_publisher_range_image = create_publisher<ros_sensor_msgs::Image>(range_image_topic, qos);
+		m_publisher_signal_image = create_publisher<ros_sensor_msgs::Image>(signal_image_topic, qos);
+		m_publisher_reflector_image = create_publisher<ros_sensor_msgs::Image>(reflector_image_topic, qos);
+		m_organized_cloud_enable = true;
+		ROS_INFO_STREAM("RosMsgpackPublisher: publishing organized cloud on topic \"" << m_publisher_organized_cloud->get_topic_name()
+			<< "\", range image on \"" << m_publisher_range_image->get_topic_name() << "\", signal image on \"" << m_publisher_signal_image->get_topic_name()
+			<< "\", reflector image on \"" << m_publisher_reflector_image->get_topic_name() << "\"");
+	}
 #elif defined __ROS_VERSION && __ROS_VERSION > 0 // ROS-1 publisher
 	int qos = 16 * 12 * 3; // 16 layers, 12 segments, 3 echos
 	int qos_val = -1;
@@ -322,6 +349,15 @@ sick_scansegment_xd::RosMsgpackPublisher::RosMsgpackPublisher(const std::string&
 		m_publisher_imu = m_node->advertise<ros_sensor_msgs::Imu>(imu_topic, qos);
 		m_publisher_imu_initialized = true;
 		ROS_INFO_STREAM("RosMsgpackPublisher: publishing Imu messages on topic \"" << config.imu_topic << "\"");
+	}
+	if (config.organized_cloud_enable)
+	{
+		m_publisher_organized_cloud = m_node->advertise<ros_sensor_msgs::PointCloud2>(config.organized_cloud_topic, qos);
+		m_publisher_range_image = m_node->advertise<ros_sensor_msgs::Image>(config.range_image_topic, qos);
+		m_publisher_signal_image = m_node->advertise<ros_sensor_msgs::Image>(config.signal_image_topic, qos);
+		m_organized_cloud_enable = true;
+		ROS_INFO_STREAM("RosMsgpackPublisher: publishing organized cloud on topic \"" << config.organized_cloud_topic
+			<< "\", range image on \"" << config.range_image_topic << "\", signal image on \"" << config.signal_image_topic << "\"");
 	}
 #endif
   sick_scan_xd::setImuTopic(imu_topic);
@@ -676,6 +712,312 @@ void sick_scansegment_xd::RosMsgpackPublisher::convertPointsToCustomizedFieldsCl
   pointcloud_msg.row_step = pointcloud_msg.point_step * point_cnt;
   pointcloud_msg.data.resize(pointcloud_msg.row_step * pointcloud_msg.height);
 	ROS_DEBUG_STREAM("CustomPointCloudConfiguration " << pointcloud_cfg.cfgName() << ": " << point_cnt << " points per cloud, " << num_fields << " fields per point");
+}
+
+/*
+ * Converts the points of a single echo (all layers, one fullframe revolution) into an organized
+ * (Ouster-style) PointCloud2 plus matching range, signal and reflector images.
+ *
+ * Each point's layer becomes the image row. multiScan136 layers are not all sampled at the same
+ * azimuth resolution (two "hires" layers sample roughly 8x denser than the rest), so rather than
+ * assuming a fixed column count, the width is the point count of the densest layer in the current
+ * frame. Each point's column is chosen from its own measured azimuth angle (not its position in
+ * the row's point list -- rows drop points independently, e.g. a beam with no return just isn't
+ * added to that row at all, so index-based placement would shift a whole row's points sideways
+ * after every drop relative to a row that didn't drop there). Columns a layer has no return for
+ * are marked exactly like a dropped shot on a real organized cloud: x/y/z = NaN, range = 0,
+ * is_dense = false.
+ *
+ * "reflector" here is multiScan's reflectorbit -- a per-point flag the firmware sets when a point
+ * hits a designated retroreflector (navigation landmark), not a calibrated reflectivity value like
+ * Ouster's REFLECTIVITY channel. multiScan has no continuous reflectivity channel to offer instead.
+ */
+void sick_scansegment_xd::RosMsgpackPublisher::convertPointsToOrganizedCloud(uint32_t timestamp_sec, uint32_t timestamp_nsec, uint64_t lidar_timestamp_start_microsec,
+	const std::vector<sick_scansegment_xd::PointXYZRAEI32f>& points, const std::string& frame_id,
+	PointCloud2Msg& cloud_msg, ros_sensor_msgs::Image& range_image_msg, ros_sensor_msgs::Image& signal_image_msg, ros_sensor_msgs::Image& reflector_image_msg)
+{
+	int num_layers = 0;
+	for (const sick_scansegment_xd::PointXYZRAEI32f& point : points)
+		num_layers = std::max(num_layers, point.layer + 1);
+	if (num_layers <= 0)
+		return;
+
+	std::vector<std::vector<CustomizedPointXYZRAEI32f>> rows(num_layers);
+	for (const sick_scansegment_xd::PointXYZRAEI32f& point : points)
+		if (point.layer >= 0 && point.layer < num_layers)
+			rows[point.layer].emplace_back(timestamp_sec, timestamp_nsec, lidar_timestamp_start_microsec, point);
+
+	size_t width = 0;
+	for (const std::vector<CustomizedPointXYZRAEI32f>& row : rows)
+		width = std::max(width, row.size());
+	size_t height = (size_t)num_layers;
+	if (width == 0)
+		return;
+
+	cloud_msg.header.stamp.sec = timestamp_sec;
+#if defined __ROS_VERSION && __ROS_VERSION > 1
+	cloud_msg.header.stamp.nanosec = timestamp_nsec;
+#else
+	cloud_msg.header.stamp.nsec = timestamp_nsec;
+#endif
+	cloud_msg.header.frame_id = frame_id;
+	cloud_msg.height = (uint32_t)height;
+	cloud_msg.width = (uint32_t)width;
+	cloud_msg.is_bigendian = false;
+	cloud_msg.is_dense = false; // sparser layers leave gaps where no beam maps to a column
+
+	struct FieldDef { const char* name; uint8_t datatype; size_t datasize; };
+	const FieldDef field_defs[] = {
+		{ "x", PointField::FLOAT32, sizeof(float) }, { "y", PointField::FLOAT32, sizeof(float) },
+		{ "z", PointField::FLOAT32, sizeof(float) }, { "i", PointField::FLOAT32, sizeof(float) },
+		{ "range", PointField::FLOAT32, sizeof(float) }, { "t", PointField::UINT32, sizeof(uint32_t) },
+		{ "ring", PointField::INT32, sizeof(int32_t) }, { "reflector", PointField::UINT8, sizeof(uint8_t) },
+	};
+	const int num_cloud_fields = sizeof(field_defs) / sizeof(field_defs[0]);
+	cloud_msg.fields.resize(num_cloud_fields);
+	uint32_t point_offset = 0;
+	for (int i = 0; i < num_cloud_fields; i++)
+	{
+		cloud_msg.fields[i].name = field_defs[i].name;
+		cloud_msg.fields[i].datatype = field_defs[i].datatype;
+		cloud_msg.fields[i].count = 1;
+		cloud_msg.fields[i].offset = point_offset;
+		point_offset += (uint32_t)field_defs[i].datasize;
+	}
+	cloud_msg.point_step = point_offset;
+	cloud_msg.row_step = cloud_msg.point_step * cloud_msg.width;
+	cloud_msg.data.assign((size_t)cloud_msg.row_step * cloud_msg.height, 0);
+
+	// range_image/signal_image are 8-bit, normalized per-frame for direct viewing (same approach
+	// Ouster's own os_image_node takes: "there is rounding/clamping to display 8 bit images. For
+	// computer vision applications, use higher bit depth values in the point cloud" -- raw float
+	// range/intensity values are still there in full precision on organized_cloud's "range"/"i"
+	// fields; a plain float32 image reads as flat black/white in most viewers since they assume
+	// float pixels are already normalized to [0,1], and these values are nowhere near that scale.
+	range_image_msg.header = cloud_msg.header;
+	range_image_msg.height = (uint32_t)height;
+	range_image_msg.width = (uint32_t)width;
+	range_image_msg.encoding = "mono8";
+	range_image_msg.is_bigendian = false;
+	range_image_msg.step = (uint32_t)width;
+	range_image_msg.data.assign((size_t)range_image_msg.step * height, 0);
+	std::vector<float> range_raw((size_t)width * height, 0.0f);
+	float range_min = std::numeric_limits<float>::infinity(), range_max = -std::numeric_limits<float>::infinity();
+
+	signal_image_msg.header = cloud_msg.header;
+	signal_image_msg.height = (uint32_t)height;
+	signal_image_msg.width = (uint32_t)width;
+	signal_image_msg.encoding = "mono8";
+	signal_image_msg.is_bigendian = false;
+	signal_image_msg.step = (uint32_t)width;
+	signal_image_msg.data.assign((size_t)signal_image_msg.step * height, 0);
+	std::vector<float> signal_raw((size_t)width * height, 0.0f);
+	float signal_min = std::numeric_limits<float>::infinity(), signal_max = -std::numeric_limits<float>::infinity();
+
+	reflector_image_msg.header = cloud_msg.header;
+	reflector_image_msg.height = (uint32_t)height;
+	reflector_image_msg.width = (uint32_t)width;
+	reflector_image_msg.encoding = "mono8";
+	reflector_image_msg.is_bigendian = false;
+	reflector_image_msg.step = (uint32_t)width;
+	reflector_image_msg.data.assign((size_t)reflector_image_msg.step * height, 0);
+
+	// Azimuth used for column placement, mirrored + wrapped to [-pi,pi) so that increasing azimuth
+	// (a left-to-right sweep in front of the sensor) reads left-to-right in the image.
+	auto azimuthUsed = [](float raw_azimuth) {
+		double azimuth = -(double)raw_azimuth;
+		while (azimuth >= M_PI) azimuth -= 2.0 * M_PI;
+		while (azimuth < -M_PI) azimuth += 2.0 * M_PI;
+		return azimuth;
+	};
+
+	const float nan_value = std::numeric_limits<float>::quiet_NaN();
+	for (size_t row = 0; row < height; row++)
+	{
+		// Layer index increases with elevation (measured from live data: layer 3 sits at -7 deg,
+		// layer 13 at +35 deg), but image row 0 is conventionally drawn at the top -- so place the
+		// highest layer at row 0, otherwise the image renders upside down.
+		size_t display_row = height - 1 - row;
+		int32_t ring = (int32_t)row;
+
+		// Sort this row's points by azimuth so each output column can grab its nearest point
+		// (gather), instead of scattering each point into its own rounded bin. Scattering left
+		// single-pixel gaps all over the place -- even a fully-covered row isn't evenly spaced
+		// (some layers report points in tight pairs with a bigger gap between pairs, a real
+		// per-beam hardware quirk, not noise), so neighbouring points would round into the same
+		// bin and leave the one next to it empty, rendering as salt-and-pepper "TV static".
+		// Gathering guarantees every column with a point nearby gets filled.
+		struct RowPoint { double azimuth; const CustomizedPointXYZRAEI32f * point; double accept_radius; };
+		std::vector<RowPoint> sorted_row;
+		sorted_row.reserve(rows[row].size());
+		for (const CustomizedPointXYZRAEI32f & point : rows[row])
+			sorted_row.push_back({azimuthUsed(point.azimuth), &point, 0.0});
+		std::sort(sorted_row.begin(), sorted_row.end(),
+			[](const RowPoint & a, const RowPoint & b) { return a.azimuth < b.azimuth; });
+
+		// A column only accepts a point if it's genuinely close by: otherwise a sparse row (or a
+		// row with a genuinely empty arc) would have every column painted with its single nearest
+		// point, hiding real gaps (dropped shots) as if they were returns. The radius is per-point,
+		// not one row-wide average: using a single average pitch was too tight for the wide side of
+		// a paired/bursty layer (rejecting real coverage) while also being too loose for a layer
+		// that only covers part of the revolution (bleeding fake points into a genuinely empty
+		// arc). Each point's own radius comes from its actual neighbour spacing, capped so it can
+		// bridge a local cluster gap without painting across a large genuine gap.
+		double bin_width = 2.0 * M_PI / (double)width;
+		size_t n = sorted_row.size();
+		for (size_t i = 0; i < n; i++)
+		{
+			double gap_prev = (i > 0) ? (sorted_row[i].azimuth - sorted_row[i - 1].azimuth)
+				: (sorted_row[i].azimuth - (sorted_row[n - 1].azimuth - 2.0 * M_PI));
+			double gap_next = (i + 1 < n) ? (sorted_row[i + 1].azimuth - sorted_row[i].azimuth)
+				: ((sorted_row[0].azimuth + 2.0 * M_PI) - sorted_row[i].azimuth);
+			double local_gap = std::max(gap_prev, gap_next);
+			sorted_row[i].accept_radius = std::min(std::max(bin_width, 0.6 * local_gap), 5.0 * bin_width);
+		}
+
+		for (size_t col = 0; col < width; col++)
+		{
+			double az_center = ((double)col + 0.5) / (double)width * 2.0 * M_PI - M_PI;
+			const RowPoint * best = nullptr;
+			double best_dist = std::numeric_limits<double>::infinity();
+			if (!sorted_row.empty())
+			{
+				auto consider = [&](const RowPoint & cand, double wrap_offset) {
+					double d = std::fabs((cand.azimuth + wrap_offset) - az_center);
+					if (d < best_dist) { best_dist = d; best = &cand; }
+				};
+				auto it = std::lower_bound(sorted_row.begin(), sorted_row.end(), az_center,
+					[](const RowPoint & a, double val) { return a.azimuth < val; });
+				if (it != sorted_row.end())
+					consider(*it, 0.0);
+				if (it != sorted_row.begin())
+					consider(*(it - 1), 0.0);
+				// azimuth wraps around at +/-pi: also check the ends against the wrapped copies
+				consider(sorted_row.front(), 2.0 * M_PI);
+				consider(sorted_row.back(), -2.0 * M_PI);
+			}
+
+			uint8_t* cloud_point = &cloud_msg.data[display_row * cloud_msg.row_step + col * cloud_msg.point_step];
+			size_t raw_idx = display_row * width + col;
+			uint8_t* reflector_pixel = &reflector_image_msg.data[display_row * reflector_image_msg.step + col];
+
+			if (best && best_dist <= best->accept_radius)
+			{
+				const CustomizedPointXYZRAEI32f * p = best->point;
+				memcpy(cloud_point + cloud_msg.fields[0].offset, &p->x, sizeof(float));
+				memcpy(cloud_point + cloud_msg.fields[1].offset, &p->y, sizeof(float));
+				memcpy(cloud_point + cloud_msg.fields[2].offset, &p->z, sizeof(float));
+				memcpy(cloud_point + cloud_msg.fields[3].offset, &p->i, sizeof(float));
+				memcpy(cloud_point + cloud_msg.fields[4].offset, &p->range, sizeof(float));
+				memcpy(cloud_point + cloud_msg.fields[5].offset, &p->time_offset_nanosec, sizeof(uint32_t));
+				memcpy(cloud_point + cloud_msg.fields[6].offset, &ring, sizeof(int32_t));
+				memcpy(cloud_point + cloud_msg.fields[7].offset, &p->reflectorbit, sizeof(uint8_t));
+				range_raw[raw_idx] = p->range;
+				signal_raw[raw_idx] = p->i;
+				if (p->range > 0.0f) { range_min = std::min(range_min, p->range); range_max = std::max(range_max, p->range); }
+				if (p->i > 0.0f) { signal_min = std::min(signal_min, p->i); signal_max = std::max(signal_max, p->i); }
+				*reflector_pixel = p->reflectorbit ? 255 : 0;
+			}
+			else
+			{
+				// No return: mark exactly like a dropped shot on a real organized cloud.
+				float zero_f = 0.0f;
+				uint32_t zero_u32 = 0;
+				memcpy(cloud_point + cloud_msg.fields[0].offset, &nan_value, sizeof(float));
+				memcpy(cloud_point + cloud_msg.fields[1].offset, &nan_value, sizeof(float));
+				memcpy(cloud_point + cloud_msg.fields[2].offset, &nan_value, sizeof(float));
+				memcpy(cloud_point + cloud_msg.fields[3].offset, &zero_f, sizeof(float));
+				memcpy(cloud_point + cloud_msg.fields[4].offset, &zero_f, sizeof(float));
+				memcpy(cloud_point + cloud_msg.fields[5].offset, &zero_u32, sizeof(uint32_t));
+				memcpy(cloud_point + cloud_msg.fields[6].offset, &ring, sizeof(int32_t));
+				cloud_point[cloud_msg.fields[7].offset] = 0;
+				range_raw[raw_idx] = 0.0f;
+				signal_raw[raw_idx] = 0.0f;
+				*reflector_pixel = 0;
+			}
+		}
+	}
+
+	// Normalize into 1..255 per-frame (0 stays reserved for "no return"), so the image is directly
+	// viewable without a viewer having to know the physical unit or per-scene value range.
+	auto normalizeInto = [](const std::vector<float> & raw, float vmin, float vmax, bool use_log, std::vector<uint8_t> & out) {
+		bool degenerate = !(vmax > vmin); // no valid pixels, or all valid pixels equal
+		// Range easily spans centimeters to tens of metres in the same frame (a close obstacle plus
+		// open room behind it): a linear map crushes the near end to a couple of grey levels while
+		// only the farthest handful of pixels use the rest of the range. Log-scale keeps both ends
+		// visible, same as any other depth image. Signal's dynamic range doesn't need this.
+		float log_min = use_log ? std::log(vmin) : 0.0f;
+		float log_max = use_log ? std::log(vmax) : 0.0f;
+		for (size_t i = 0; i < raw.size(); i++)
+		{
+			if (raw[i] <= 0.0f)
+				out[i] = 0;
+			else if (degenerate)
+				out[i] = 128;
+			else if (use_log)
+				out[i] = (uint8_t)(1.0f + 254.0f * (std::log(raw[i]) - log_min) / (log_max - log_min));
+			else
+				out[i] = (uint8_t)(1.0f + 254.0f * (raw[i] - vmin) / (vmax - vmin));
+		}
+	};
+	normalizeInto(range_raw, range_min, range_max, true, range_image_msg.data);
+	normalizeInto(signal_raw, signal_min, signal_max, false, signal_image_msg.data);
+
+	// The organized_cloud stays at native resolution (one row per layer, ring-addressable) since
+	// that's what a filter needs. The range/signal images are for humans, though, and multiScan's
+	// rows are so much coarser than its columns (14-16 layers vs. thousands of azimuth steps) that
+	// at native resolution they render as an unreadable sliver. Stretch each row into as many
+	// image rows as it takes to make a row pixel cover roughly the same field of view as a column
+	// pixel, using the layers' own measured elevation spacing (no assumed vertical FOV/layer count)
+	// so this keeps working if a differently configured multiScan/picoScan reports different layers.
+	double row_angular_pitch = 0.0;
+	{
+		double pitch_sum = 0.0;
+		int pitch_cnt = 0;
+		double prev_elevation = 0.0;
+		bool have_prev = false;
+		for (int row = 0; row < num_layers; row++)
+		{
+			if (rows[row].empty())
+				continue;
+			double elevation_sum = 0.0;
+			for (const CustomizedPointXYZRAEI32f& point : rows[row])
+				elevation_sum += point.elevation;
+			double elevation = elevation_sum / (double)rows[row].size();
+			if (have_prev)
+			{
+				pitch_sum += std::fabs(elevation - prev_elevation);
+				pitch_cnt++;
+			}
+			prev_elevation = elevation;
+			have_prev = true;
+		}
+		if (pitch_cnt > 0)
+			row_angular_pitch = pitch_sum / pitch_cnt;
+	}
+	double azimuth_angular_pitch = 2.0 * M_PI / (double)width;
+	size_t row_repeat = 1;
+	if (row_angular_pitch > 0.0 && azimuth_angular_pitch > 0.0)
+	{
+		row_repeat = (size_t)std::llround(row_angular_pitch / azimuth_angular_pitch);
+		row_repeat = std::max((size_t)1, std::min(row_repeat, (size_t)200)); // sane upper bound against a bad estimate
+	}
+	auto expandImageRows = [row_repeat](ros_sensor_msgs::Image& img) {
+		if (row_repeat <= 1)
+			return;
+		std::vector<uint8_t> expanded((size_t)img.step * img.height * row_repeat);
+		for (uint32_t row = 0; row < img.height; row++)
+		{
+			const uint8_t* src = &img.data[(size_t)row * img.step];
+			for (size_t r = 0; r < row_repeat; r++)
+				memcpy(&expanded[((size_t)row * row_repeat + r) * img.step], src, img.step);
+		}
+		img.data.swap(expanded);
+		img.height = img.height * (uint32_t)row_repeat;
+	};
+	expandImageRows(range_image_msg);
+	expandImageRows(signal_image_msg);
+	expandImageRows(reflector_image_msg);
 }
 
 /*
@@ -1068,6 +1410,28 @@ void sick_scansegment_xd::RosMsgpackPublisher::HandleMsgPackData(const sick_scan
 						  m_points_collector.lidar_points, custom_pointcloud_cfg, pointcloud_msg_custom_fields);
 						publishPointCloud2Msg(m_node, custom_pointcloud_cfg.publisher(), pointcloud_msg_custom_fields, std::max(1, (int)echo_count), -1, custom_pointcloud_cfg.coordinateNotation(), custom_pointcloud_cfg.topic());
 						// ROS_INFO_STREAM("RosMsgpackPublisher::HandleMsgPackData(): published " << pointcloud_msg_custom_fields.width << "x" << pointcloud_msg_custom_fields.height << " pointcloud, " << pointcloud_msg_custom_fields.fields.size() << " fields/point, " << pointcloud_msg_custom_fields.data.size() << " bytes");
+					}
+				}
+				// publish organized cloud + range/signal/reflector images (built from the first echo only)
+				if (m_organized_cloud_enable && !m_points_collector.lidar_points.empty() && !m_points_collector.lidar_points[0].empty())
+				{
+					PointCloud2Msg organized_cloud_msg;
+					ros_sensor_msgs::Image range_image_msg, signal_image_msg, reflector_image_msg;
+					convertPointsToOrganizedCloud(m_points_collector.timestamp_sec, m_points_collector.timestamp_nsec, m_points_collector.lidar_timestamp_start_microsec,
+					  m_points_collector.lidar_points[0], m_frame_id, organized_cloud_msg, range_image_msg, signal_image_msg, reflector_image_msg);
+					if (organized_cloud_msg.width > 0)
+					{
+#if defined __ROS_VERSION && __ROS_VERSION > 1
+						m_publisher_organized_cloud->publish(organized_cloud_msg);
+						m_publisher_range_image->publish(range_image_msg);
+						m_publisher_signal_image->publish(signal_image_msg);
+						m_publisher_reflector_image->publish(reflector_image_msg);
+#else
+						m_publisher_organized_cloud.publish(organized_cloud_msg);
+						m_publisher_range_image.publish(range_image_msg);
+						m_publisher_signal_image.publish(signal_image_msg);
+						m_publisher_reflector_image.publish(reflector_image_msg);
+#endif
 					}
 				}
 				// publish 360 degree Laserscan message

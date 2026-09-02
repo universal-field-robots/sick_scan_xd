@@ -13,6 +13,11 @@
     <arg name="imu_topic" default="imu" />                                          <!-- topic of ros IMU messages -->
     <arg name="udp_port" default="2115" />                                          <!-- default udp port for multiScan devices is 2115 -->
     <arg name="imu_udp_port" default="7503"/>                                       <!-- udp port for multiScan imu data (if imu_enable is true) -->
+    <arg name="organized_cloud_enable" default="True"/>                             <!-- publish an organized (Ouster-style) pointcloud plus range/signal images -->
+    <arg name="organized_cloud_topic" default="organized_cloud"/>                   <!-- topic of the organized pointcloud -->
+    <arg name="range_image_topic" default="range_image"/>                          <!-- topic of the range (depth) image -->
+    <arg name="signal_image_topic" default="signal_image"/>                        <!-- topic of the signal (intensity) image -->
+    <arg name="reflector_image_topic" default="reflector_image"/>                  <!-- topic of the reflector-bit image -->
     <arg name="add_transform_xyz_rpy" default="0,0,0,0,0,0"/>
     <arg name="add_transform_check_dynamic_updates" default="false"/>               <!-- Note: dynamical updates of parameter add_transform_xyz_rpy can decrease the performance and is therefor deactivated by default -->
     <arg name="laserscan_layer_filter" default="0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0" /> <!-- Configuration of laserscan messages (ROS only), default: laserscan messages for layer 6 activated (hires layer, elevation -0.07 deg) -->
@@ -56,6 +61,13 @@
         <param name="imu_udp_port" type="int" value="$(arg imu_udp_port)"/>                 <!-- udp port for multiScan imu data (if imu_enable is true) -->
         <param name="imu_latency_microsec" type="int" value="0"/>                           <!-- imu latency in microseconds -->
         <param name="imu_topic" type="string" value="$(arg imu_topic)"/>                    <!-- topic of ros IMU messages -->
+
+        <!-- Organized (Ouster-style) pointcloud + range/signal images, built from a single echo's points reshaped into a layer x azimuth grid -->
+        <param name="organized_cloud_enable" type="bool" value="$(arg organized_cloud_enable)"/>
+        <param name="organized_cloud_topic" type="string" value="$(arg organized_cloud_topic)"/>
+        <param name="range_image_topic" type="string" value="$(arg range_image_topic)"/>
+        <param name="signal_image_topic" type="string" value="$(arg signal_image_topic)"/>
+        <param name="reflector_image_topic" type="string" value="$(arg reflector_image_topic)"/>
         
         <!-- Apply an additional transform to the cartesian pointcloud, default: "0,0,0,0,0,0" (i.e. no transform) -->
         <!-- Note: add_transform_xyz_rpy is specified by 6D pose x, y, z, roll, pitch, yaw in [m] resp. [rad] -->

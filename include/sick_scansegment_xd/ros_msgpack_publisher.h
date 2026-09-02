@@ -376,6 +376,24 @@ namespace sick_scansegment_xd
 
         void convertPointsToLaserscanMsg(uint32_t timestamp_sec, uint32_t timestamp_nsec, const std::vector<std::vector<sick_scansegment_xd::PointXYZRAEI32f>>& lidar_points, size_t total_point_count, LaserScanMsgMap& laser_scan_msg_map, const std::string& frame_id, bool is_fullframe);
 
+        /*
+        * Converts the points of a single echo into an organized (Ouster-style) PointCloud2 plus matching
+        * range, signal and reflector images, using each point's layer as the image row and its measured
+        * azimuth angle to pick the image column.
+        * @param[in] timestamp_sec seconds part of timestamp (system time)
+        * @param[in] timestamp_nsec nanoseconds part of timestamp (system time)
+        * @param[in] lidar_timestamp_start_microsec lidar start timestamp in microseconds (lidar ticks)
+        * @param[in] points points of a single echo (all layers) of one fullframe revolution
+        * @param[in] frame_id ros frame id of the output messages
+        * @param[out] cloud_msg organized pointcloud message (height = number of layers, width = points of the densest layer)
+        * @param[out] range_image_msg range image, encoding "mono8", normalized per-frame (full precision meter values are on cloud_msg's "range" field)
+        * @param[out] signal_image_msg signal (intensity) image, encoding "mono8", normalized per-frame (full precision values are on cloud_msg's "i" field)
+        * @param[out] reflector_image_msg reflector-bit image, encoding "mono8" (0 or 255), not a calibrated reflectivity value
+        */
+        void convertPointsToOrganizedCloud(uint32_t timestamp_sec, uint32_t timestamp_nsec, uint64_t lidar_timestamp_start_microsec,
+            const std::vector<sick_scansegment_xd::PointXYZRAEI32f>& points, const std::string& frame_id,
+            PointCloud2Msg& cloud_msg, ros_sensor_msgs::Image& range_image_msg, ros_sensor_msgs::Image& signal_image_msg, ros_sensor_msgs::Image& reflector_image_msg);
+
         /** Shortcut to publish a PointCloud2Msg */
         void publishPointCloud2Msg(rosNodePtr node, PointCloud2MsgPublisher& publisher, PointCloud2Msg& pointcloud_msg, int32_t num_echos, int32_t segment_idx, int coordinate_notation, const std::string& topic);
 
@@ -410,6 +428,11 @@ namespace sick_scansegment_xd
         LaserscanMsgPublisher m_publisher_laserscan_segment; // ros publisher to publish LaserScan messages of the current segment
         ImuMsgPublisher m_publisher_imu;                     // ros publisher to publish Imu messages
         bool m_publisher_imu_initialized = false;            // imu messages enabled, ros publisher for Imu messages initialized
+        bool m_organized_cloud_enable = false;               // publish organized pointcloud + range/signal images, configured by config.organized_cloud_enable
+        PointCloud2MsgPublisher m_publisher_organized_cloud; // ros publisher to publish the organized pointcloud
+        ImageMsgPublisher m_publisher_range_image;           // ros publisher to publish the range (depth) image
+        ImageMsgPublisher m_publisher_signal_image;          // ros publisher to publish the signal (intensity) image
+        ImageMsgPublisher m_publisher_reflector_image;       // ros publisher to publish the reflector-bit image
         double m_scan_time = 0;                              // scan_time = 1 / scan_frequency = time for a full 360-degree rotation of the sensor
         std::vector<int> m_laserscan_layer_filter;           // Configuration of laserscan messages (ROS only), activate/deactivate laserscan messages for each layer
 	    std::vector<CustomPointCloudConfiguration> m_custom_pointclouds_cfg; // Configuration of customized pointclouds
